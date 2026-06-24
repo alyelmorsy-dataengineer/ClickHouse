@@ -25,6 +25,8 @@ public:
 
     ProjectionStorageFormat getProjectionStorageFormat() const override { return projection_storage_format; }
 
+    DataPartProjectionIteratorPtr iterateProjections(bool include_temp) const override;
+
     std::string getFullPath() const override;
     std::string getRelativePath() const override;
     std::string getPartDirectory() const override;

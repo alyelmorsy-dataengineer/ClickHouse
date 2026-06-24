@@ -706,11 +706,28 @@ void DataPartStorageOnDiskBase::rename(
 
     String from = getRelativePath();
 
+    /// Relocate FLAT projection siblings (nested ones move with the part dir)
+    std::vector<std::pair<String, String>> flat_projection_moves;
+    if (projection_storage_format == ProjectionStorageFormat::FLAT)
+    {
+        for (auto proj = iterateProjections(/*include_temp=*/ false); proj->isValid(); proj->next())
+        {
+            if (proj->format() != ProjectionStorageFormat::FLAT)
+                continue;
+            String proj_from = fs::path(proj->rootPath()) / proj->realName();
+            String proj_to = fs::path(new_root_path) / (new_part_dir + "." + proj->name());
+            flat_projection_moves.emplace_back(std::move(proj_from), std::move(proj_to));
+        }
+    }
+
     /// Why?
     executeWriteOperation([&](auto & disk)
     {
         disk.setLastModified(from, Poco::Timestamp::fromEpochTime(time(nullptr)));
         disk.moveDirectory(from, to);
+
+        for (const auto & [proj_from, proj_to] : flat_projection_moves)
+            disk.moveDirectory(proj_from, proj_to);
 
         /// Only after moveDirectory() since before the directory does not exist.
         SyncGuardPtr to_sync_guard;
@@ -732,6 +749,132 @@ void DataPartStorageOnDiskBase::rename(
         if (!skip_indices_packed_reader)
             skip_indices_packed_probed = false;
     }
+}
+
+namespace
+{
+
+bool matchesProjectionSuffix(const std::string & name, bool include_temp, bool & is_temp)
+{
+    if (endsWith(name, ".tmp_proj"))
+    {
+        if (!include_temp)
+            return false;
+        is_temp = true;
+        return true;
+    }
+    if (endsWith(name, ".proj"))
+    {
+        is_temp = false;
+        return true;
+    }
+    return false;
+}
+
+/// Iterates nested projection dirs (children of the part dir) then flat siblings at the part root
+class ProjectionIteratorOnDisk : public IDataPartProjectionIterator
+{
+public:
+    ProjectionIteratorOnDisk(DiskPtr disk_, std::string root_, std::string part_dir_, bool include_temp_)
+        : disk(std::move(disk_))
+        , root(std::move(root_))
+        , part_dir(std::move(part_dir_))
+        , flat_prefix(part_dir + ".")
+        , include_temp(include_temp_)
+        , nested(disk->iterateDirectory(fs::path(root) / part_dir))
+        , flat(disk->iterateDirectory(root))
+    {
+        locate();
+    }
+
+    void next() override
+    {
+        if (phase == Phase::Nested)
+            nested->next();
+        else if (phase == Phase::Flat)
+            flat->next();
+        locate();
+    }
+
+    bool isValid() const override { return phase != Phase::Done; }
+
+    std::string name() const override { return norm_name; }
+    std::string realName() const override { return real_name; }
+    std::string rootPath() const override { return cur_root; }
+    IDataPartStorage::ProjectionStorageFormat format() const override { return cur_format; }
+    bool isTemp() const override { return temp; }
+
+private:
+    enum class Phase { Nested, Flat, Done };
+
+    void locate()
+    {
+        while (phase == Phase::Nested)
+        {
+            if (!nested->isValid())
+            {
+                phase = Phase::Flat;
+                break;
+            }
+            const auto entry = nested->name();
+            if (matchesProjectionSuffix(entry, include_temp, temp))
+            {
+                norm_name = real_name = entry;
+                cur_root = fs::path(root) / part_dir;
+                cur_format = IDataPartStorage::ProjectionStorageFormat::LEGACY_NESTED;
+                seen.insert(norm_name);
+                return;
+            }
+            nested->next();
+        }
+
+        while (phase == Phase::Flat)
+        {
+            if (!flat->isValid())
+            {
+                phase = Phase::Done;
+                return;
+            }
+            const auto entry = flat->name();
+            if (startsWith(entry, flat_prefix))
+            {
+                const auto stripped = entry.substr(flat_prefix.size());
+                if (matchesProjectionSuffix(stripped, include_temp, temp) && !seen.contains(stripped))
+                {
+                    norm_name = stripped;
+                    real_name = entry;
+                    cur_root = root;
+                    cur_format = IDataPartStorage::ProjectionStorageFormat::FLAT;
+                    return;
+                }
+            }
+            flat->next();
+        }
+    }
+
+    DiskPtr disk;
+    std::string root;
+    std::string part_dir;
+    std::string flat_prefix;
+    bool include_temp;
+
+    DirectoryIteratorPtr nested;
+    DirectoryIteratorPtr flat;
+    Phase phase = Phase::Nested;
+    NameSet seen;
+
+    std::string norm_name;
+    std::string real_name;
+    std::string cur_root;
+    IDataPartStorage::ProjectionStorageFormat cur_format = IDataPartStorage::ProjectionStorageFormat::NONE;
+    bool temp = false;
+};
+
+}
+
+DataPartProjectionIteratorPtr DataPartStorageOnDiskBase::iterateProjections(bool include_temp) const
+{
+    return std::make_unique<ProjectionIteratorOnDisk>(volume->getDisk(), root_path, part_dir, include_temp);
 }
 
 void DataPartStorageOnDiskBase::remove(

@@ -88,7 +88,7 @@ IDataPartStorage::ProjectionStorageFormat DataPartStorageOnDiskFull::detectProje
         ProjectionStorageFormat other = (projection_storage_format == ProjectionStorageFormat::LEGACY_NESTED)
             ? ProjectionStorageFormat::FLAT
             : ProjectionStorageFormat::LEGACY_NESTED;
-        const auto [proj_root_other, proj_dir_other] = getProjectionStorageRootAndDir(root_path, part_dir, name, projection_storage_format);
+        const auto [proj_root_other, proj_dir_other] = getProjectionStorageRootAndDir(root_path, part_dir, name, other);
         if (disk->existsDirectory(fs::path(proj_root_other) / proj_dir_other))
             detected = other;
     }

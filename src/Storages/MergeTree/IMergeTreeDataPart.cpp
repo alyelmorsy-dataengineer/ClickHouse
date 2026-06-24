@@ -2267,21 +2267,35 @@ void IMergeTreeDataPart::renameTo(const String & new_relative_path, bool remove_
     std::string relative_path = storage.relative_data_path;
     bool fsync_dir = (*storage.getSettings())[MergeTreeSetting::fsync_part_directory];
 
+    fs::path to;
     if (parent_part)
     {
-        /// For projections, move is only possible inside parent part dir.
-        relative_path = parent_part->getDataPartStorage().getRelativePath();
+        /// Projection lives inside the parent part dir (legacy) or as a sibling at its root (flat)
+        const auto & parent_storage = parent_part->getDataPartStorage();
+        fs::path parent_rel = parent_storage.getRelativePath();
+        if (parent_storage.getProjectionStorageFormat() == IDataPartStorage::ProjectionStorageFormat::FLAT)
+            to = parent_rel.parent_path() / (parent_rel.filename().string() + "." + new_relative_path);
+        else
+            to = parent_rel / new_relative_path;
     }
+    else
+        to = fs::path(relative_path) / new_relative_path;
 
     auto old_projection_root_path = getDataPartStorage().getRelativePath();
-    auto to = fs::path(relative_path) / new_relative_path;
 
     getDataPartStorage().rename(to.parent_path(), to.filename(), storage.log.load(), remove_new_dir_if_exists, fsync_dir);
 
     auto new_projection_root_path = to.string();
 
-    for (const auto & [_, part] : projection_parts)
-        part->getDataPartStorage().changeRootPath(old_projection_root_path, new_projection_root_path);
+    /// Update in-memory projection storage paths to match the moved part
+    const bool flat_projections = getDataPartStorage().getProjectionStorageFormat() == IDataPartStorage::ProjectionStorageFormat::FLAT;
+    for (const auto & [projection_name, part] : projection_parts)
+    {
+        if (flat_projections)
+            part->getDataPartStorage().setRelativePath(to.filename().string() + "." + projection_name + ".proj");
+        else
+            part->getDataPartStorage().changeRootPath(old_projection_root_path, new_projection_root_path);
+    }
 }
 
 std::pair<bool, NameSet> IMergeTreeDataPart::canRemovePart() const
