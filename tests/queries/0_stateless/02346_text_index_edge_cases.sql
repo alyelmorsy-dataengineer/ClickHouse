@@ -12,6 +12,8 @@
 -- Positive counterparts that *do* push down are exercised below as a sanity
 -- check.
 
+SET optimize_empty_string_comparisons = 1;
+
 DROP TABLE IF EXISTS t_text_idx_extra;
 
 CREATE TABLE t_text_idx_extra
