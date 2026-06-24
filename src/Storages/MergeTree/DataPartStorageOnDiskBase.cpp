@@ -50,16 +50,28 @@ std::unique_ptr<ReadBufferFromFileBase> IDataPartStorage::readFile(
     return pipeline.build();
 }
 
-DataPartStorageOnDiskBase::DataPartStorageOnDiskBase(VolumePtr volume_, std::string root_path_, std::string part_dir_)
-    : volume(std::move(volume_)), root_path(std::move(root_path_)), part_dir(std::move(part_dir_))
+DataPartStorageOnDiskBase::DataPartStorageOnDiskBase(
+    VolumePtr volume_,
+    std::string root_path_,
+    std::string part_dir_,
+    ProjectionStorageFormat projection_storage_format_)
+    : volume(std::move(volume_))
+    , root_path(std::move(root_path_))
+    , part_dir(std::move(part_dir_))
+    , projection_storage_format(projection_storage_format_)
 {
 }
 
 DataPartStorageOnDiskBase::DataPartStorageOnDiskBase(
-    VolumePtr volume_, std::string root_path_, std::string part_dir_, DiskTransactionPtr transaction_)
+    VolumePtr volume_,
+    std::string root_path_,
+    std::string part_dir_,
+    DiskTransactionPtr transaction_,
+    ProjectionStorageFormat projection_storage_format_)
     : volume(std::move(volume_))
     , root_path(std::move(root_path_))
     , part_dir(std::move(part_dir_))
+    , projection_storage_format(projection_storage_format_)
     , transaction(std::move(transaction_))
     , has_shared_transaction(transaction != nullptr)
 {
@@ -167,7 +179,12 @@ bool DataPartStorageOnDiskBase::looksLikeBrokenDetachedPartHasTheSameContent(con
     if (!existsFile("checksums.txt"))
         return false;
 
-    auto storage_from_detached = create(volume, fs::path(root_path) / MergeTreeData::DETACHED_DIR_NAME, detached_part_path, /*initialize=*/ true);
+    auto storage_from_detached = create(
+        volume,
+        fs::path(root_path) / MergeTreeData::DETACHED_DIR_NAME,
+        detached_part_path,
+        /*initialize=*/ true,
+        projection_storage_format);
     if (!storage_from_detached->existsFile("checksums.txt"))
         return false;
 
@@ -546,7 +563,10 @@ MutableDataPartStoragePtr DataPartStorageOnDiskBase::freeze(
 
     /// Do not initialize storage in case of DETACH because part may be broken.
     bool to_detached = dir_path.starts_with(std::string_view((fs::path(MergeTreeData::DETACHED_DIR_NAME) / "").string()));
-    return create(single_disk_volume, to, dir_path, /*initialize=*/ !to_detached && !params.external_transaction);
+    return create(
+        single_disk_volume, to, dir_path,
+        /*initialize=*/ !to_detached && !params.external_transaction,
+        projection_storage_format);
 }
 
 MutableDataPartStoragePtr DataPartStorageOnDiskBase::freezeRemote(
@@ -602,7 +622,10 @@ MutableDataPartStoragePtr DataPartStorageOnDiskBase::freezeRemote(
 
     /// Do not initialize storage in case of DETACH because part may be broken.
     bool to_detached = dir_path.starts_with(std::string_view((fs::path(MergeTreeData::DETACHED_DIR_NAME) / "").string()));
-    return create(single_disk_volume, to, dir_path, /*initialize=*/ !to_detached && !params.external_transaction);
+    return create(
+        single_disk_volume, to, dir_path,
+        /*initialize=*/ !to_detached && !params.external_transaction,
+        projection_storage_format);
 }
 
 MutableDataPartStoragePtr DataPartStorageOnDiskBase::clonePart(
@@ -639,7 +662,7 @@ MutableDataPartStoragePtr DataPartStorageOnDiskBase::clonePart(
     }
 
     auto single_disk_volume = std::make_shared<SingleDiskVolume>(dst_disk->getName(), dst_disk, 0);
-    return create(single_disk_volume, to, dir_path, /*initialize=*/ true);
+    return create(single_disk_volume, to, dir_path, /*initialize=*/ true, projection_storage_format);
 }
 
 void DataPartStorageOnDiskBase::rename(
@@ -864,7 +887,7 @@ void DataPartStorageOnDiskBase::remove(
         if (endsWith(name, proj_suffix) && !projection_directories.contains(name))
         {
             static constexpr auto checksums_name = "checksums.txt";
-            auto projection_storage = create(volume, to, name, /*initialize=*/ true);
+            auto projection_storage = create(volume, to, name, /*initialize=*/ true, projection_storage_format);
 
             /// If we have a directory with suffix '.proj' it is likely a projection.
             /// Try to load checksums for it (to avoid recursive removing fallback).

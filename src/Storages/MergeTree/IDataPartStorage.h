@@ -100,6 +100,18 @@ public:
 
     virtual MergeTreeDataPartStorageType getType() const = 0;
 
+    /// On-disk layout of projection sub-parts
+    ///   LEGACY_NESTED:   <parts_root>/<part_dir>/<projection>.proj/...
+    ///   FLAT:            <parts_root>/<part_dir>.<projection>.proj/...
+    enum class ProjectionStorageFormat : uint8_t
+    {
+        NONE,
+        LEGACY_NESTED,
+        FLAT,
+    };
+
+    virtual ProjectionStorageFormat getProjectionStorageFormat() const { return ProjectionStorageFormat::LEGACY_NESTED; }
+
     /// Methods to get path components of a data part.
     virtual std::string getFullPath() const = 0;         /// '/var/lib/clickhouse/data/database/table/moving/all_1_5_1'
     virtual std::string getRelativePath() const = 0;     ///                          'database/table/moving/all_1_5_1'
@@ -109,8 +121,13 @@ public:
     /// Can add it if needed                             ///                          'database/table/moving'
     /// virtual std::string getRelativeRootPath() const = 0;
 
-    /// Get a storage for projection.
+    /// Checks whether part has projection
+    virtual bool hasProjection(const std::string & name) = 0;
+
+    /// Get mutable projection
     virtual std::shared_ptr<IDataPartStorage> getProjection(const std::string & name, bool use_parent_transaction = true) = 0; // NOLINT
+
+    /// Get const projection
     virtual std::shared_ptr<const IDataPartStorage> getProjection(const std::string & name) const = 0;
 
     /// Part directory exists.
@@ -301,6 +318,7 @@ public:
     virtual void changeRootPath(const std::string & from_root, const std::string & to_root) = 0;
 
     virtual void createDirectories() = 0;
+    /// Creates the on-disk directory for a projection sub-part
     virtual void createProjection(const std::string & name) = 0;
 
     virtual std::unique_ptr<WriteBufferFromFileBase> writeFile(

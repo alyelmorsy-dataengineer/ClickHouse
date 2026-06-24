@@ -1387,8 +1387,8 @@ void IMergeTreeDataPart::loadProjections(
     auto metadata_snapshot = storage.getInMemoryMetadataPtr(storage.getContext(), false);
     for (const auto & projection : metadata_snapshot->projections)
     {
-        auto path = projection.name + ".proj";
-        if (getDataPartStorage().existsDirectory(path))
+        auto projection_path = projection.name + ".proj";
+        if (getDataPartStorage().hasProjection(projection_path))
         {
             if (hasProjection(projection.name))
             {
@@ -1423,11 +1423,11 @@ void IMergeTreeDataPart::loadProjections(
                 addProjectionPart(projection.name, std::move(part));
             }
         }
-        else if (check_consistency && checksums.has(path))
+        else if (check_consistency && checksums.has(projection_path))
         {
             auto part = getProjectionPartBuilder(projection.name, &projection).withPartFormatFromDisk().build();
             part->setBrokenReason(
-                "Projection directory " + path + " does not exist while loading projections. Stacktrace: " + StackTrace().toString(),
+                "Projection directory " + projection_path + " does not exist while loading projections. Stacktrace: " + StackTrace().toString(),
                 ErrorCodes::NO_FILE_IN_DATA_PART);
             addProjectionPart(projection.name, std::move(part));
             has_broken_projection = true;
